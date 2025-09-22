@@ -1,0 +1,196 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <time.h>
+#include <locale.h>
+#include <wchar.h>
+#include <wctype.h>
+
+double last_result = 0.0;
+int has_last_result = 0;
+
+// Функция для вывода заставки из файла
+void show_welcome_screen() {
+    FILE* file;
+    if (_wfopen_s(&file, L"welcome.txt", L"r, ccs=UTF-8") != 0) {
+        wprintf(L"Не удалось загрузить заставку welcome.txt\n");
+        return;
+    }
+
+    wchar_t line[256];
+    while (fgetws(line, sizeof(line) / sizeof(wchar_t), file) != NULL) {
+        wprintf(L"%s", line);
+    }
+    fclose(file);
+}
+
+void write_to_file(wchar_t operation, double a, double b, double result) {
+    FILE* file;
+    if (_wfopen_s(&file, L"calculator_log.txt", L"a, ccs=UTF-8") != 0) {
+        wprintf(L"Ошибка открытия файла!\n");
+        return;
+    }
+
+    time_t now;
+    time(&now);
+    wchar_t time_str[26];
+    _wctime_s(time_str, sizeof(time_str) / sizeof(wchar_t), &now);
+    time_str[wcslen(time_str) - 1] = L'\0';
+
+    fwprintf(file, L"[%s] %.6lf %lc %.6lf = %.6lf\n",
+        time_str, a, operation, b, result);
+    fclose(file);
+}
+
+void write_reset_to_file() {
+    FILE* file;
+    if (_wfopen_s(&file, L"calculator_log.txt", L"a, ccs=UTF-8") != 0) {
+        wprintf(L"Ошибка открытия файла!\n");
+        return;
+    }
+
+    time_t now;
+    time(&now);
+    wchar_t time_str[26];
+    _wctime_s(time_str, sizeof(time_str) / sizeof(wchar_t), &now);
+    time_str[wcslen(time_str) - 1] = L'\0';
+
+    fwprintf(file, L"[%s] Сброс результата (команда 'c')\n", time_str);
+    fclose(file);
+}
+
+int parse_expression(const wchar_t* input, double* a, wchar_t* op, double* b) {
+    const wchar_t* p = input;
+    wchar_t* endptr;
+
+    while (iswspace(*p)) p++;
+
+    if (*p == L'c' || *p == L'C') {
+        has_last_result = 0;
+        return 2;
+    }
+
+    if (has_last_result) {
+        *a = last_result;
+    }
+    else {
+        *a = wcstod(p, &endptr);
+        if (endptr == p) return 0;
+        p = endptr;
+    }
+
+    while (iswspace(*p)) p++;
+
+    if (*p != L'+' && *p != L'-' && *p != L'*' && *p != L'/') return 0;
+    *op = *p++;
+
+    while (iswspace(*p)) p++;
+
+    *b = wcstod(p, &endptr);
+    if (endptr == p) return 0;
+    p = endptr;
+
+    while (iswspace(*p)) p++;
+    return (*p == L'\0' || *p == L'\n') ? 1 : 0;
+}
+
+int main() {
+    setlocale(LC_ALL, "ru_RU.UTF-8");
+
+    // Выводим заставку в самом начале
+    show_welcome_screen();
+    getchar();
+    system("cls");
+    // Очищаем файл лога при старте
+    FILE* file;
+    _wfopen_s(&file, L"calculator_log.txt", L"w, ccs=UTF-8");
+    if (file) fclose(file);
+
+    double a, b, result;
+    wchar_t operation;
+    wchar_t input[100];
+
+    wprintf(L"Добро пожаловать в калькулятор\n");
+    wprintf(L"Я поддерживаю такие операции как: +, -, *, /\n");
+    wprintf(L"Ввод операций происходит через клавиатуру\n");
+    wprintf(L"Пример ввода: 5+3 (Enter=получаем результат)\n");
+    wprintf(L"Прмер ввода: -9 (Enter=получаем результат)\n");
+    while (1) {
+        wprintf(L"Введите выражение ('c' для сброса или 'n' для выхода): ");
+
+        if (fgetws(input, sizeof(input) / sizeof(wchar_t), stdin) == NULL) {
+            break;
+        }
+
+        if (input[0] == L'n' || input[0] == L'N') {
+            break;
+        }
+
+        int parse_result = parse_expression(input, &a, &operation, &b);
+
+        if (parse_result == 0) {
+            wprintf(L"Ошибка ввода\n");
+            continue;
+        }
+        else if (parse_result == 2) {
+            wprintf(L"Результат сброшен\n");
+            write_reset_to_file();
+            continue;
+        }
+
+        switch (operation) {
+        case L'+':
+            __asm {
+                fld qword ptr[a]
+                fld qword ptr[b]
+                fadd
+                fstp qword ptr[result]
+            }
+            break;
+
+        case L'-':
+            __asm {
+                fld qword ptr[a]
+                fld qword ptr[b]
+                fsub
+                fstp qword ptr[result]
+            }
+            break;
+
+        case L'*':
+            if (b == 0.0) {
+                wprintf(L"Ошибка: умножение на ноль!\n");
+                continue;
+            }
+            __asm {
+                fld qword ptr[a]
+                fld qword ptr[b]
+                fmul
+                fstp qword ptr[result]
+            }
+            break;
+
+        case L'/':
+            if (b == 0.0) {
+                wprintf(L"Ошибка: деление на ноль!\n");
+                continue;
+            }
+            __asm {
+                fld qword ptr[a]
+                fld qword ptr[b]
+                fdiv
+                fstp qword ptr[result]
+            }
+            break;
+        }
+
+        last_result = result;
+        has_last_result = 1;
+
+        wprintf(L"Результат: %.6lf\n", result);
+        write_to_file(operation, a, b, result);
+    }
+
+    wprintf(L"Работа завершена. Лог сохранен в calculator_log.txt\n");
+    return 0;
+}
